@@ -46,4 +46,4 @@ jobs:
 
       - name: 🎬 Run Streamer
         run: |
-          python cli_webpage_to_m3u8.py --url "${{ github.event.inputs.url }}" --quality "${{ github.event.inputs.quality }}" --duration "${{ github.event.inputs.duration }}"
+          python -u cli_webpage_to_m3u8.py --url "${{ github.event.inputs.url }}" --quality "${{ github.event.inputs.quality }}" --duration "${{ github.event.inputs.duration }}"
