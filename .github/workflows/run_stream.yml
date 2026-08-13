@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       quality:
-        description: 'Stream Quality (e.g., 240p, 480p, 720p, 1080p)'
+        description: 'Stream Quality (Resolution)'
         required: true
         default: '720p'
         type: choice
@@ -19,6 +19,17 @@ on:
           - '720p'
           - '1080p'
           - '1440p'
+      fps:
+        description: 'Frames Per Second (FPS)'
+        required: true
+        default: '15'
+        type: choice
+        options:
+          - '10'
+          - '15'
+          - '20'
+          - '30'
+          - '60'
       duration:
         description: 'Duration to run in minutes (Max 360 mins on GitHub)'
         required: true
@@ -41,9 +52,9 @@ jobs:
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install playwright imageio-ffmpeg flask requests
+          pip install playwright flask requests
           playwright install chromium
 
       - name: 🎬 Run Streamer
         run: |
-          python -u cli_webpage_to_m3u8.py --url "${{ github.event.inputs.url }}" --quality "${{ github.event.inputs.quality }}" --duration "${{ github.event.inputs.duration }}"
+          python -u cli_webpage_to_m3u8.py --url "${{ github.event.inputs.url }}" --quality "${{ github.event.inputs.quality }}" --fps "${{ github.event.inputs.fps }}" --duration "${{ github.event.inputs.duration }}"
