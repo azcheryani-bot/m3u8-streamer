@@ -9,7 +9,7 @@ from flask import Flask, send_from_directory, make_response
 
 app = Flask(__name__)
 
-# فایل HTML شما دقیقاً در اینجا قرار داده شده است
+# فایل HTML شما
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
@@ -179,19 +179,28 @@ def run_server():
 
 def start_tunnel():
     print("🌐 در حال برقراری اتصال به تونل عمومی SSH (localhost.run)...")
+    
+    # 1. ساخت کلید اختصاصی برای گیت‌هاب (جهت رفع ارور اتصال پنهان)
+    ssh_key_path = os.path.expanduser('~/.ssh/id_rsa')
+    if not os.path.exists(ssh_key_path):
+        os.system(f"ssh-keygen -q -t rsa -N '' -f {ssh_key_path} 2>/dev/null <<< y")
+        
     process = subprocess.Popen(
         ['ssh', '-R', '80:localhost:8080', '-o', 'StrictHostKeyChecking=no', 'nokey@localhost.run'],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
+    
+    link_found = False
+    # 2. خواندن مداوم خروجی سرور برای جلوگیری از هنگ کردن استریم در ترافیک بالا
     for line in iter(process.stdout.readline, ''):
-        if 'lhr.life' in line and 'admin' not in line:
-            url_match = re.search(r'https://[a-zA-Z0-9-]+\.lhr\.life', line)
-            if url_match:
+        if not link_found:
+            url_match = re.search(r'https://[a-zA-Z0-9-]+\.(lhr\.life|localhost\.run)', line)
+            if url_match and 'admin' not in line:
                 print(f"\n==================================================")
                 print(f"🚀 لینک عمومی استریم M3U8 آماده شد:")
                 print(f"🔗 {url_match.group(0)}/live.m3u8")
                 print(f"==================================================\n")
-                break
+                link_found = True
 
 def main():
     parser = argparse.ArgumentParser()
@@ -218,7 +227,7 @@ def main():
     # 1. Start Web Server and Tunnel
     threading.Thread(target=run_server, daemon=True).start()
     threading.Thread(target=start_tunnel, daemon=True).start()
-    time.sleep(2) # صبر برای لود شدن سرور محلی
+    time.sleep(2)
 
     print(f"⚙️ تنظیمات مانیتور مجازی و استریم: {resolution} | {fps} FPS")
     
@@ -227,7 +236,7 @@ def main():
     subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{resolution}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
 
-    # 3. Open Chromium directly in Virtual Display (Full screen, no overhead)
+    # 3. Open Chromium directly in Virtual Display
     print("🎥 باز کردن صفحه روی مانیتور مجازی...")
     chrome_cmd = [
         'chromium-browser', 
@@ -239,9 +248,9 @@ def main():
         'http://127.0.0.1:8080/'
     ]
     subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(3) # صبر برای لود شدن انیمیشن‌ها
+    time.sleep(3)
 
-    # 4. Capture Virtual Screen directly with FFmpeg (Zero-lag hardware level capture)
+    # 4. Capture Virtual Screen directly with FFmpeg
     print("🚀 شروع فیلم‌برداری مستقیم و پخش زنده...")
     ffmpeg_cmd = [
         'ffmpeg', '-y',
@@ -266,7 +275,6 @@ def main():
     
     ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    # نگه داشتن برنامه برای مدت زمان تعیین شده
     time.sleep(args.duration * 60)
     
     ffmpeg_proc.terminate()
