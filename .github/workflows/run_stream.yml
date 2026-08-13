@@ -3,10 +3,6 @@ name: 🚀 Run M3U8 Streamer
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: 'URL of the webpage to stream (e.g., https://example.com)'
-        required: true
-        type: string
       quality:
         description: 'Stream Quality (Resolution)'
         required: true
@@ -18,14 +14,12 @@ on:
           - '480p'
           - '720p'
           - '1080p'
-          - '1440p'
       fps:
         description: 'Frames Per Second (FPS)'
         required: true
-        default: '15'
+        default: '30'
         type: choice
         options:
-          - '10'
           - '15'
           - '20'
           - '30'
@@ -49,14 +43,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 📦 Install dependencies
+      - name: 📦 Install Server Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y xvfb chromium-browser ffmpeg
           python -m pip install --upgrade pip
-          pip install playwright flask requests
-          playwright install chromium
+          pip install flask requests
 
-      - name: 🎬 Run Streamer
+      - name: 🎬 Run Streamer (Virtual Display Mode)
         run: |
-          python -u cli_webpage_to_m3u8.py --url "${{ github.event.inputs.url }}" --quality "${{ github.event.inputs.quality }}" --fps "${{ github.event.inputs.fps }}" --duration "${{ github.event.inputs.duration }}"
+          python -u cli_webpage_to_m3u8.py --quality "${{ github.event.inputs.quality }}" --fps "${{ github.event.inputs.fps }}" --duration "${{ github.event.inputs.duration }}"
