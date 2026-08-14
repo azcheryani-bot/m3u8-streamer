@@ -10,7 +10,7 @@ from flask import Flask, make_response
 
 app = Flask(__name__)
 
-# فایل HTML شما با تمامی استایل‌ها و اسکریپت‌ها
+# فایل HTML شما (استایل مخفی‌سازی موس به آن اضافه شد)
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
@@ -25,7 +25,10 @@ HTML_CONTENT = """<!DOCTYPE html>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
     <style>
-        body { font-family: 'Vazirmatn', sans-serif; margin: 0; padding: 0; overflow: hidden; -webkit-font-smoothing: antialiased; }
+        * {
+            cursor: none !important;
+        }
+        body { font-family: 'Vazirmatn', sans-serif; margin: 0; padding: 0; overflow: hidden; -webkit-font-smoothing: antialiased; cursor: none !important; }
         @keyframes scrollSeamless { 0% { transform: translate3d(-50%, 0, 0); } 100% { transform: translate3d(0, 0, 0); } }
         .marquee-content { display: flex; width: max-content; will-change: transform; align-items: center; }
     </style>
@@ -165,7 +168,7 @@ def serve_index():
     response.headers['Content-Type'] = 'text/html; charset=utf-8'
     return response
 
-# تنظیمات اتصال به Object Storage نئون
+# مشخصات اتصال به نئون
 S3_ENDPOINT = "https://br-lucky-wave-axbfuzrm.storage.c-4.us-east-2.aws.neon.tech"
 S3_ACCESS_KEY = "nak_live_1bfd6791115643c59cee64e82e36e1cd"
 S3_SECRET_KEY = "nsk_live_a15238f9642107cd7482831f8d003dfbf6d2bdcae52bb44b099eb321a74c60a7"
@@ -191,7 +194,6 @@ def s3_sync_worker(stop_event):
     uploaded_files = set()
     print("☁️ همگام‌ساز خودکار به حافظه ابری نئون فعال شد.")
     while not stop_event.is_set():
-        # آپلود فایل‌های تکه ویدیویی (.ts)
         for ts_file in glob.glob("*.ts"):
             if ts_file not in uploaded_files and os.path.exists(ts_file):
                 try:
@@ -206,7 +208,6 @@ def s3_sync_worker(stop_event):
                 except Exception:
                     pass
         
-        # آپلود فایل پلی‌لیست (.m3u8) به محض تولید
         if os.path.exists("live.m3u8"):
             try:
                 s3_client.upload_file(
@@ -242,46 +243,64 @@ def main():
         try: os.remove(f)
         except: pass
 
-    # ۱. راه‌اندازی سرور محلی
+    # ۱. اجرای سرور داخلی
     threading.Thread(target=run_server, daemon=True).start()
     time.sleep(1)
 
-    # ۲. مانیتور مجازی
+    # ۲. ایجاد صفحه مانیتور مجازی
     os.environ["DISPLAY"] = ":99"
     subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{resolution}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
 
-    # ۳. باز کردن کروم روی مانیتور مجازی
+    # ۳. باز کردن کروم با حذف کامل نوار ترجمه و تمام پاپ‌آپ‌ها
     chrome_cmd = [
-        'chromium-browser', '--kiosk', '--no-sandbox', '--disable-infobars',
-        '--disable-dev-shm-usage', f'--window-size={resolution.replace("x", ",")}',
+        'chromium-browser',
+        '--kiosk',
+        '--no-sandbox',
+        '--disable-infobars',
+        '--disable-dev-shm-usage',
+        '--disable-translate',
+        '--disable-features=Translate',
+        '--simulate-outdated-no-au="1980-01-01"',
+        f'--window-size={resolution.replace("x", ",")}',
         'http://127.0.0.1:8080/'
     ]
     subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
 
-    # ۴. شروع انکود استریم
+    # ۴. ضبط صفحه با حذف کامل نشانگر ماوس (-draw_mouse 0)
     ffmpeg_cmd = [
-        'ffmpeg', '-y', '-f', 'x11grab', '-video_size', resolution,
-        '-framerate', str(fps), '-i', ':99.0', '-c:v', 'libx264',
-        '-preset', 'ultrafast', '-tune', 'zerolatency',
-        '-b:v', bitrate, '-maxrate', bitrate,
+        'ffmpeg', '-y',
+        '-f', 'x11grab',
+        '-draw_mouse', '0',
+        '-video_size', resolution,
+        '-framerate', str(fps),
+        '-i', ':99.0',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-b:v', bitrate,
+        '-maxrate', bitrate,
         '-bufsize', str(int(bitrate.replace('k',''))*2) + 'k',
-        '-pix_fmt', 'yuv420p', '-g', str(fps * 2),
-        '-f', 'hls', '-hls_time', '2', '-hls_list_size', '5',
-        '-hls_flags', 'delete_segments', 'live.m3u8'
+        '-pix_fmt', 'yuv420p',
+        '-g', str(fps * 2),
+        '-f', 'hls',
+        '-hls_time', '2',
+        '-hls_list_size', '5',
+        '-hls_flags', 'delete_segments',
+        'live.m3u8'
     ]
     ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # ۵. فعال‌سازی آپلودر به نئون
+    # ۵. راه‌اندازی همگام‌ساز فایل‌ها
     stop_event = threading.Event()
     uploader_thread = threading.Thread(target=s3_sync_worker, args=(stop_event,), daemon=True)
     uploader_thread.start()
 
     neon_stream_url = f"{S3_ENDPOINT}/{BUCKET_NAME}/live.m3u8"
     print("\n" + "="*60)
-    print("🚀 پخش زنده روی حافظه نئون آغاز شد!")
-    print(f"🔗 آدرس مستقیم نئون: {neon_stream_url}")
+    print("🚀 استریم زنده شفاف و بدون ماوس/نوار ترجمه آغاز شد!")
+    print(f"🔗 آدرس مستقیم: {neon_stream_url}")
     print("="*60 + "\n")
 
     time.sleep(args.duration * 60)
