@@ -5,13 +5,15 @@ import json
 import threading
 import subprocess
 import glob
+import signal
+import sys
 import boto3
 from botocore.client import Config
 from flask import Flask, make_response
 
 app = Flask(__name__)
 
-# فایل HTML با مسدودسازی کامل هرگونه ترجمه و ماوس
+# فایل HTML اختصاصی با مسدودسازی کامل هرگونه ترجمه و ماوس
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="fa" dir="rtl" translate="no" class="notranslate">
 <head>
@@ -189,6 +191,18 @@ s3_client = boto3.client(
     config=Config(signature_version='s3v4')
 )
 
+# تابع پاک‌سازی تمام فایل‌های باکت در نئون
+def purge_bucket():
+    print("🧹 در حال پاک‌سازی فایل‌های استریم از سرور نئون...")
+    try:
+        response = s3_client.list_objects_v2(Bucket=BUCKET_NAME)
+        if 'Contents' in response:
+            objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
+            s3_client.delete_objects(Bucket=BUCKET_NAME, Delete={'Objects': objects_to_delete})
+            print("✨ باکت نئون کاملاً تخلیه شد.")
+    except Exception as e:
+        print(f"⚠️ خطای جزیی در پاک‌سازی: {e}")
+
 def run_server():
     import logging
     log = logging.getLogger('werkzeug')
@@ -206,7 +220,7 @@ def s3_sync_worker(stop_event):
                         ts_file, BUCKET_NAME, ts_file,
                         ExtraArgs={
                             'ContentType': 'video/MP2T',
-                            'CacheControl': 'public, max-age=3600'
+                            'CacheControl': 'no-cache, no-store, must-revalidate'
                         }
                     )
                     uploaded_files.add(ts_file)
@@ -245,25 +259,26 @@ def main():
     resolution_str, width, height, bitrate = qualities.get(args.quality, qualities['720p'])
     fps = args.fps
 
+    # ۱. پاک‌سازی اولیه فایل‌های محلی و سرور نئون
     for f in glob.glob("*.ts") + glob.glob("*.m3u8"):
         try: os.remove(f)
         except: pass
+    purge_bucket()
 
-    # ۱. راه‌اندازی وب‌سرور داخلی
+    # ۲. راه‌اندازی وب‌سرور داخلی
     threading.Thread(target=run_server, daemon=True).start()
     time.sleep(1)
 
-    # ۲. ایجاد مانیتور مجازی دقیقاً به ابعاد رزولوشن انتخاب‌شده
+    # ۳. ایجاد مانیتور مجازی به ابعاد دقیق
     os.environ["DISPLAY"] = ":99"
     subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{width}x{height}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
 
-    # ۳. آماده‌سازی پروفایل امن مرورگر برای غیرفعال‌سازی قطعی ترجمه و بارگذاری تمیز
+    # ۴. تنظیم پروفایل کروم و حذف قطعی نوار ترجمه
     profile_dir = f"/tmp/clean_chrome_profile_{width}x{height}"
     default_dir = os.path.join(profile_dir, "Default")
     os.makedirs(default_dir, exist_ok=True)
     
-    # تزریق تنظیمات پیش‌فرض ضد ترجمه به صورت سخت‌افزاری به کروم
     prefs = {
         "translate": {"enabled": False},
         "translate_blocked_languages": ["fa", "en", "ar", "und"],
@@ -272,7 +287,7 @@ def main():
     with open(os.path.join(default_dir, "Preferences"), "w") as f:
         json.dump(prefs, f)
 
-    # ۴. اجرای کروم با تطابق کامل ابعاد و حذف تمامی رابط‌های کاربری و نوارها
+    # ۵. باز کردن مرورگر بدون هیچ‌گونه نوار و آیکون
     chrome_cmd = [
         'chromium-browser',
         '--kiosk',
@@ -292,7 +307,7 @@ def main():
     subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
 
-    # ۵. ضبط صفحه نمایش مجازی با حذف نشانگر ماوس در تمامی رزولوشن‌ها
+    # ۶. ضبط صفحه و ساخت فایل‌های HLS
     ffmpeg_cmd = [
         'ffmpeg', '-y',
         '-f', 'x11grab',
@@ -316,21 +331,38 @@ def main():
     ]
     ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # ۶. فعال‌سازی همگام‌ساز خودکار به نئون
+    # ۷. همگام‌ساز خودکار به نئون
     stop_event = threading.Event()
     uploader_thread = threading.Thread(target=s3_sync_worker, args=(stop_event,), daemon=True)
     uploader_thread.start()
 
     neon_stream_url = f"{S3_ENDPOINT}/{BUCKET_NAME}/live.m3u8"
     print("\n" + "="*60)
-    print(f"🚀 استریم در کیفیت {args.quality} ({width}x{height}) بدون ماوس و بدون نوار ترجمه آغاز شد!")
-    print(f"🔗 آدرس مستقیم استریم: {neon_stream_url}")
+    print(f"🚀 استریم در کیفیت {args.quality} ({width}x{height}) آغاز شد!")
+    print(f"🔗 آدرس مستقیم: {neon_stream_url}")
     print("="*60 + "\n")
 
-    time.sleep(args.duration * 60)
-    stop_event.set()
-    ffmpeg_proc.terminate()
-    print("✅ زمان استریم به پایان رسید.")
+    # تابع خروج و پاک‌سازی هنگام متوقف شدن
+    def cleanup_and_exit(signum=None, frame=None):
+        print("\n🛑 دستور توقف دریافت شد. در حال قطع استریم...")
+        stop_event.set()
+        try:
+            ffmpeg_proc.terminate()
+        except:
+            pass
+        purge_bucket()
+        print("✅ استریم متوقف و باکت نئون تخلیه شد.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, cleanup_and_exit)
+    signal.signal(signal.SIGTERM, cleanup_and_exit)
+
+    # انتظار برای اتمام مدت زمان تعیین شده
+    end_time = time.time() + (args.duration * 60)
+    while time.time() < end_time:
+        time.sleep(1)
+
+    cleanup_and_exit()
 
 if __name__ == "__main__":
     main()
