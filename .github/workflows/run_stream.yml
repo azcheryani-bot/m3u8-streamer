@@ -14,6 +14,7 @@ on:
           - '480p'
           - '720p'
           - '1080p'
+          - '1440p'
       fps:
         description: 'Frames Per Second (FPS)'
         required: true
