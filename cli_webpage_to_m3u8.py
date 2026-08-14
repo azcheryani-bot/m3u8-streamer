@@ -10,7 +10,7 @@ from flask import Flask, make_response
 
 app = Flask(__name__)
 
-# فایل HTML شما با تمامی تنظیمات
+# فایل HTML شما با تمامی استایل‌ها و اسکریپت‌ها
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
@@ -165,7 +165,7 @@ def serve_index():
     response.headers['Content-Type'] = 'text/html; charset=utf-8'
     return response
 
-# مشخصات استوریج نئون شما
+# تنظیمات اتصال به Object Storage نئون
 S3_ENDPOINT = "https://br-lucky-wave-axbfuzrm.storage.c-4.us-east-2.aws.neon.tech"
 S3_ACCESS_KEY = "nak_live_1bfd6791115643c59cee64e82e36e1cd"
 S3_SECRET_KEY = "nsk_live_a15238f9642107cd7482831f8d003dfbf6d2bdcae52bb44b099eb321a74c60a7"
@@ -187,7 +187,6 @@ def run_server():
     log.setLevel(logging.ERROR)
     app.run(host='127.0.0.1', port=8080)
 
-# ربات آپلود خودکار و بلادرنگ به نئون
 def s3_sync_worker(stop_event):
     uploaded_files = set()
     print("☁️ همگام‌ساز خودکار به حافظه ابری نئون فعال شد.")
@@ -198,20 +197,26 @@ def s3_sync_worker(stop_event):
                 try:
                     s3_client.upload_file(
                         ts_file, BUCKET_NAME, ts_file,
-                        ExtraArgs={'ContentType': 'video/MP2T', 'CacheControl': 'public, max-age=3600'}
+                        ExtraArgs={
+                            'ContentType': 'video/MP2T',
+                            'CacheControl': 'public, max-age=3600'
+                        }
                     )
                     uploaded_files.add(ts_file)
-                except Exception as e:
+                except Exception:
                     pass
         
-        # آپلود فایل پلی‌لیست (.m3u8) به محض تغییر
+        # آپلود فایل پلی‌لیست (.m3u8) به محض تولید
         if os.path.exists("live.m3u8"):
             try:
                 s3_client.upload_file(
                     "live.m3u8", BUCKET_NAME, "live.m3u8",
-                    ExtraArgs={'ContentType': 'application/vnd.apple.mpegurl', 'CacheControl': 'no-cache, no-store, must-revalidate'}
+                    ExtraArgs={
+                        'ContentType': 'application/vnd.apple.mpegurl',
+                        'CacheControl': 'no-cache, no-store, must-revalidate'
+                    }
                 )
-            except Exception as e:
+            except Exception:
                 pass
 
         time.sleep(0.5)
@@ -237,16 +242,16 @@ def main():
         try: os.remove(f)
         except: pass
 
-    # 1. سرور صفحه نمایشگر داخلی
+    # ۱. راه‌اندازی سرور محلی
     threading.Thread(target=run_server, daemon=True).start()
     time.sleep(1)
 
-    # 2. مانیتور مجازی
+    # ۲. مانیتور مجازی
     os.environ["DISPLAY"] = ":99"
     subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{resolution}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
 
-    # 3. باز کردن تمام صفحه HTML روی مانیتور مجازی
+    # ۳. باز کردن کروم روی مانیتور مجازی
     chrome_cmd = [
         'chromium-browser', '--kiosk', '--no-sandbox', '--disable-infobars',
         '--disable-dev-shm-usage', f'--window-size={resolution.replace("x", ",")}',
@@ -255,7 +260,7 @@ def main():
     subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
 
-    # 4. شروع استریم ویدیویی
+    # ۴. شروع انکود استریم
     ffmpeg_cmd = [
         'ffmpeg', '-y', '-f', 'x11grab', '-video_size', resolution,
         '-framerate', str(fps), '-i', ':99.0', '-c:v', 'libx264',
@@ -268,17 +273,15 @@ def main():
     ]
     ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # 5. روشن کردن آپلودر به سرور ابری نئون
+    # ۵. فعال‌سازی آپلودر به نئون
     stop_event = threading.Event()
     uploader_thread = threading.Thread(target=s3_sync_worker, args=(stop_event,), daemon=True)
     uploader_thread.start()
 
-    # چاپ لینک ثابت و ابدی استریم شما
     neon_stream_url = f"{S3_ENDPOINT}/{BUCKET_NAME}/live.m3u8"
     print("\n" + "="*60)
-    print("🚀 پخش زنده با موفقیت روی سرور اختصاصی ابری نئون آغاز شد!")
-    print(f"🔗 آدرس استریم ثابت و دائمی شما:")
-    print(f"👉 {neon_stream_url}")
+    print("🚀 پخش زنده روی حافظه نئون آغاز شد!")
+    print(f"🔗 آدرس مستقیم نئون: {neon_stream_url}")
     print("="*60 + "\n")
 
     time.sleep(args.duration * 60)
