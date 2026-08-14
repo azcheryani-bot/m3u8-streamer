@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+import json
 import threading
 import subprocess
 import glob
@@ -10,13 +11,14 @@ from flask import Flask, make_response
 
 app = Flask(__name__)
 
-# فایل HTML شما با غیرفعال‌سازی قطعی نوار ترجمه و مخفی‌سازی موس
+# فایل HTML با مسدودسازی کامل هرگونه ترجمه و ماوس
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="fa" dir="rtl" translate="no" class="notranslate">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="google" content="notranslate">
+    <meta name="googlebot" content="notranslate">
     <title>نمایشگر زنده مراسم</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -28,6 +30,8 @@ HTML_CONTENT = """<!DOCTYPE html>
     <style>
         * {
             cursor: none !important;
+            -webkit-user-select: none;
+            user-select: none;
         }
         body { font-family: 'Vazirmatn', sans-serif; margin: 0; padding: 0; overflow: hidden; -webkit-font-smoothing: antialiased; cursor: none !important; }
         @keyframes scrollSeamless { 0% { transform: translate3d(-50%, 0, 0); } 100% { transform: translate3d(0, 0, 0); } }
@@ -169,7 +173,7 @@ def serve_index():
     response.headers['Content-Type'] = 'text/html; charset=utf-8'
     return response
 
-# مشخصات اتصال به نئون
+# مشخصات اتصال به باکت استوریج نئون
 S3_ENDPOINT = "https://br-lucky-wave-axbfuzrm.storage.c-4.us-east-2.aws.neon.tech"
 S3_ACCESS_KEY = "nak_live_1bfd6791115643c59cee64e82e36e1cd"
 S3_SECRET_KEY = "nsk_live_a15238f9642107cd7482831f8d003dfbf6d2bdcae52bb44b099eb321a74c60a7"
@@ -231,54 +235,69 @@ def main():
     args = parser.parse_args()
 
     qualities = {
-        '240p': ('426x240', '500k'),
-        '360p': ('640x360', '800k'),
-        '480p': ('854x480', '1200k'),
-        '720p': ('1280x720', '2500k'),
-        '1080p': ('1920x1080', '4500k'),
+        '240p': ('426x240', 426, 240, '500k'),
+        '360p': ('640x360', 640, 360, '800k'),
+        '480p': ('854x480', 854, 480, '1200k'),
+        '720p': ('1280x720', 1280, 720, '2500k'),
+        '1080p': ('1920x1080', 1920, 1080, '4500k'),
+        '1440p': ('2560x1440', 2560, 1440, '9000k')
     }
-    resolution, bitrate = qualities.get(args.quality, qualities['720p'])
+    resolution_str, width, height, bitrate = qualities.get(args.quality, qualities['720p'])
     fps = args.fps
 
     for f in glob.glob("*.ts") + glob.glob("*.m3u8"):
         try: os.remove(f)
         except: pass
 
-    # ۱. اجرای سرور وب داخلی
+    # ۱. راه‌اندازی وب‌سرور داخلی
     threading.Thread(target=run_server, daemon=True).start()
     time.sleep(1)
 
-    # ۲. ایجاد مانیتور مجازی
+    # ۲. ایجاد مانیتور مجازی دقیقاً به ابعاد رزولوشن انتخاب‌شده
     os.environ["DISPLAY"] = ":99"
-    subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{resolution}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{width}x{height}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
 
-    # ۳. باز کردن کروم با حذف کامل نوار ترجمه و کلیه پاپ‌آپ‌ها
+    # ۳. آماده‌سازی پروفایل امن مرورگر برای غیرفعال‌سازی قطعی ترجمه و بارگذاری تمیز
+    profile_dir = f"/tmp/clean_chrome_profile_{width}x{height}"
+    default_dir = os.path.join(profile_dir, "Default")
+    os.makedirs(default_dir, exist_ok=True)
+    
+    # تزریق تنظیمات پیش‌فرض ضد ترجمه به صورت سخت‌افزاری به کروم
+    prefs = {
+        "translate": {"enabled": False},
+        "translate_blocked_languages": ["fa", "en", "ar", "und"],
+        "intl": {"accept_languages": "fa,en-US,en"}
+    }
+    with open(os.path.join(default_dir, "Preferences"), "w") as f:
+        json.dump(prefs, f)
+
+    # ۴. اجرای کروم با تطابق کامل ابعاد و حذف تمامی رابط‌های کاربری و نوارها
     chrome_cmd = [
         'chromium-browser',
         '--kiosk',
         '--no-sandbox',
         '--disable-infobars',
         '--disable-dev-shm-usage',
-        '--lang=fa-IR',
-        '--accept-lang=fa-IR,fa,en-US,en',
         '--disable-translate',
-        '--disable-features=Translate,OptimizationHints,MediaRouter',
+        '--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion',
         '--no-first-run',
         '--no-default-browser-check',
-        '--user-data-dir=/tmp/clean_chrome_profile',
-        f'--window-size={resolution.replace("x", ",")}',
+        '--hide-scrollbars',
+        '--window-position=0,0',
+        f'--window-size={width},{height}',
+        f'--user-data-dir={profile_dir}',
         'http://127.0.0.1:8080/'
     ]
     subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
 
-    # ۴. ضبط صفحه نمایش (حذف کامل ماوس)
+    # ۵. ضبط صفحه نمایش مجازی با حذف نشانگر ماوس در تمامی رزولوشن‌ها
     ffmpeg_cmd = [
         'ffmpeg', '-y',
         '-f', 'x11grab',
         '-draw_mouse', '0',
-        '-video_size', resolution,
+        '-video_size', f'{width}x{height}',
         '-framerate', str(fps),
         '-i', ':99.0',
         '-c:v', 'libx264',
@@ -297,15 +316,15 @@ def main():
     ]
     ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # ۵. راه‌اندازی همگام‌ساز فایل‌ها
+    # ۶. فعال‌سازی همگام‌ساز خودکار به نئون
     stop_event = threading.Event()
     uploader_thread = threading.Thread(target=s3_sync_worker, args=(stop_event,), daemon=True)
     uploader_thread.start()
 
     neon_stream_url = f"{S3_ENDPOINT}/{BUCKET_NAME}/live.m3u8"
     print("\n" + "="*60)
-    print("🚀 استریم زنده شفاف، بدون ماوس و بدون نوار ترجمه آغاز شد!")
-    print(f"🔗 آدرس مستقیم: {neon_stream_url}")
+    print(f"🚀 استریم در کیفیت {args.quality} ({width}x{height}) بدون ماوس و بدون نوار ترجمه آغاز شد!")
+    print(f"🔗 آدرس مستقیم استریم: {neon_stream_url}")
     print("="*60 + "\n")
 
     time.sleep(args.duration * 60)
