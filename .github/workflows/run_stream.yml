@@ -1,4 +1,4 @@
-name: 🚀 Run M3U8 Streamer
+name: 🚀 Run M3U8 Streamer (Neon Storage)
 
 on:
   workflow_dispatch:
@@ -48,8 +48,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb chromium-browser ffmpeg
           python -m pip install --upgrade pip
-          pip install flask requests
+          pip install flask boto3 requests
 
-      - name: 🎬 Run Streamer (Virtual Display Mode)
+      - name: 🎬 Run Streamer
         run: |
           python -u cli_webpage_to_m3u8.py --quality "${{ github.event.inputs.quality }}" --fps "${{ github.event.inputs.fps }}" --duration "${{ github.event.inputs.duration }}"
