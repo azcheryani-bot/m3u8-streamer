@@ -3,13 +3,14 @@ import os
 import time
 import threading
 import subprocess
-import re
 import glob
-from flask import Flask, send_from_directory, make_response
+import boto3
+from botocore.client import Config
+from flask import Flask, make_response
 
 app = Flask(__name__)
 
-# فایل HTML شما
+# فایل HTML شما با تمامی تنظیمات
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
@@ -164,43 +165,56 @@ def serve_index():
     response.headers['Content-Type'] = 'text/html; charset=utf-8'
     return response
 
-@app.route('/<path:filename>')
-def serve_files(filename):
-    response = send_from_directory('.', filename)
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    return response
+# مشخصات استوریج نئون شما
+S3_ENDPOINT = "https://br-lucky-wave-axbfuzrm.storage.c-4.us-east-2.aws.neon.tech"
+S3_ACCESS_KEY = "nak_live_1bfd6791115643c59cee64e82e36e1cd"
+S3_SECRET_KEY = "nsk_live_a15238f9642107cd7482831f8d003dfbf6d2bdcae52bb44b099eb321a74c60a7"
+S3_REGION = "us-east-2"
+BUCKET_NAME = "m3u8-streamer"
+
+s3_client = boto3.client(
+    's3',
+    endpoint_url=S3_ENDPOINT,
+    aws_access_key_id=S3_ACCESS_KEY,
+    aws_secret_access_key=S3_SECRET_KEY,
+    region_name=S3_REGION,
+    config=Config(signature_version='s3v4')
+)
 
 def run_server():
     import logging
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
-    app.run(host='0.0.0.0', port=8080, threaded=True)
+    app.run(host='127.0.0.1', port=8080)
 
-def start_tunnel():
-    print("🌐 در حال برقراری اتصال به تونل عمومی SSH (localhost.run)...")
-    
-    # 1. ساخت کلید اختصاصی برای گیت‌هاب (جهت رفع ارور اتصال پنهان)
-    ssh_key_path = os.path.expanduser('~/.ssh/id_rsa')
-    if not os.path.exists(ssh_key_path):
-        os.system(f"ssh-keygen -q -t rsa -N '' -f {ssh_key_path} 2>/dev/null <<< y")
+# ربات آپلود خودکار و بلادرنگ به نئون
+def s3_sync_worker(stop_event):
+    uploaded_files = set()
+    print("☁️ همگام‌ساز خودکار به حافظه ابری نئون فعال شد.")
+    while not stop_event.is_set():
+        # آپلود فایل‌های تکه ویدیویی (.ts)
+        for ts_file in glob.glob("*.ts"):
+            if ts_file not in uploaded_files and os.path.exists(ts_file):
+                try:
+                    s3_client.upload_file(
+                        ts_file, BUCKET_NAME, ts_file,
+                        ExtraArgs={'ContentType': 'video/MP2T', 'CacheControl': 'public, max-age=3600'}
+                    )
+                    uploaded_files.add(ts_file)
+                except Exception as e:
+                    pass
         
-    process = subprocess.Popen(
-        ['ssh', '-R', '80:localhost:8080', '-o', 'StrictHostKeyChecking=no', 'nokey@localhost.run'],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
-    
-    link_found = False
-    # 2. خواندن مداوم خروجی سرور برای جلوگیری از هنگ کردن استریم در ترافیک بالا
-    for line in iter(process.stdout.readline, ''):
-        if not link_found:
-            url_match = re.search(r'https://[a-zA-Z0-9-]+\.(lhr\.life|localhost\.run)', line)
-            if url_match and 'admin' not in line:
-                print(f"\n==================================================")
-                print(f"🚀 لینک عمومی استریم M3U8 آماده شد:")
-                print(f"🔗 {url_match.group(0)}/live.m3u8")
-                print(f"==================================================\n")
-                link_found = True
+        # آپلود فایل پلی‌لیست (.m3u8) به محض تغییر
+        if os.path.exists("live.m3u8"):
+            try:
+                s3_client.upload_file(
+                    "live.m3u8", BUCKET_NAME, "live.m3u8",
+                    ExtraArgs={'ContentType': 'application/vnd.apple.mpegurl', 'CacheControl': 'no-cache, no-store, must-revalidate'}
+                )
+            except Exception as e:
+                pass
+
+        time.sleep(0.5)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -216,7 +230,6 @@ def main():
         '720p': ('1280x720', '2500k'),
         '1080p': ('1920x1080', '4500k'),
     }
-    
     resolution, bitrate = qualities.get(args.quality, qualities['720p'])
     fps = args.fps
 
@@ -224,59 +237,52 @@ def main():
         try: os.remove(f)
         except: pass
 
-    # 1. Start Web Server and Tunnel
+    # 1. سرور صفحه نمایشگر داخلی
     threading.Thread(target=run_server, daemon=True).start()
-    threading.Thread(target=start_tunnel, daemon=True).start()
-    time.sleep(2)
+    time.sleep(1)
 
-    print(f"⚙️ تنظیمات مانیتور مجازی و استریم: {resolution} | {fps} FPS")
-    
-    # 2. Start Virtual Display (Xvfb)
+    # 2. مانیتور مجازی
     os.environ["DISPLAY"] = ":99"
     subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{resolution}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
 
-    # 3. Open Chromium directly in Virtual Display
-    print("🎥 باز کردن صفحه روی مانیتور مجازی...")
+    # 3. باز کردن تمام صفحه HTML روی مانیتور مجازی
     chrome_cmd = [
-        'chromium-browser', 
-        '--kiosk', 
-        '--no-sandbox', 
-        '--disable-infobars',
-        '--disable-dev-shm-usage',
-        f'--window-size={resolution.replace("x", ",")}',
+        'chromium-browser', '--kiosk', '--no-sandbox', '--disable-infobars',
+        '--disable-dev-shm-usage', f'--window-size={resolution.replace("x", ",")}',
         'http://127.0.0.1:8080/'
     ]
     subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
 
-    # 4. Capture Virtual Screen directly with FFmpeg
-    print("🚀 شروع فیلم‌برداری مستقیم و پخش زنده...")
+    # 4. شروع استریم ویدیویی
     ffmpeg_cmd = [
-        'ffmpeg', '-y',
-        '-f', 'x11grab',
-        '-video_size', resolution,
-        '-framerate', str(fps),
-        '-i', ':99.0',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-tune', 'zerolatency',
-        '-b:v', bitrate,
-        '-maxrate', bitrate,
+        'ffmpeg', '-y', '-f', 'x11grab', '-video_size', resolution,
+        '-framerate', str(fps), '-i', ':99.0', '-c:v', 'libx264',
+        '-preset', 'ultrafast', '-tune', 'zerolatency',
+        '-b:v', bitrate, '-maxrate', bitrate,
         '-bufsize', str(int(bitrate.replace('k',''))*2) + 'k',
-        '-pix_fmt', 'yuv420p',
-        '-g', str(fps * 2),
-        '-f', 'hls',
-        '-hls_time', '2',
-        '-hls_list_size', '5',
-        '-hls_flags', 'delete_segments',
-        'live.m3u8'
+        '-pix_fmt', 'yuv420p', '-g', str(fps * 2),
+        '-f', 'hls', '-hls_time', '2', '-hls_list_size', '5',
+        '-hls_flags', 'delete_segments', 'live.m3u8'
     ]
-    
     ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
+
+    # 5. روشن کردن آپلودر به سرور ابری نئون
+    stop_event = threading.Event()
+    uploader_thread = threading.Thread(target=s3_sync_worker, args=(stop_event,), daemon=True)
+    uploader_thread.start()
+
+    # چاپ لینک ثابت و ابدی استریم شما
+    neon_stream_url = f"{S3_ENDPOINT}/{BUCKET_NAME}/live.m3u8"
+    print("\n" + "="*60)
+    print("🚀 پخش زنده با موفقیت روی سرور اختصاصی ابری نئون آغاز شد!")
+    print(f"🔗 آدرس استریم ثابت و دائمی شما:")
+    print(f"👉 {neon_stream_url}")
+    print("="*60 + "\n")
+
     time.sleep(args.duration * 60)
-    
+    stop_event.set()
     ffmpeg_proc.terminate()
     print("✅ زمان استریم به پایان رسید.")
 
