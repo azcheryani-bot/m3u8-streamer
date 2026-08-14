@@ -10,12 +10,13 @@ from flask import Flask, make_response
 
 app = Flask(__name__)
 
-# فایل HTML شما (استایل مخفی‌سازی موس به آن اضافه شد)
+# فایل HTML شما با غیرفعال‌سازی قطعی نوار ترجمه و مخفی‌سازی موس
 HTML_CONTENT = """<!DOCTYPE html>
-<html lang="fa" dir="rtl">
+<html lang="fa" dir="rtl" translate="no" class="notranslate">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="google" content="notranslate">
     <title>نمایشگر زنده مراسم</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -33,7 +34,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         .marquee-content { display: flex; width: max-content; will-change: transform; align-items: center; }
     </style>
 </head>
-<body class="bg-slate-950 text-slate-100">
+<body class="bg-slate-950 text-slate-100 notranslate" translate="no">
     <div class="relative w-full h-screen overflow-hidden bg-slate-950 font-sans select-none" dir="ltr">
         <div id="bgImage" class="absolute inset-0 bg-cover bg-center z-0 transition-all duration-1000 opacity-60"></div>
         <div class="absolute inset-0 bg-gradient-to-b from-slate-900 via-slate-900/50 to-slate-900 z-0"></div>
@@ -243,32 +244,36 @@ def main():
         try: os.remove(f)
         except: pass
 
-    # ۱. اجرای سرور داخلی
+    # ۱. اجرای سرور وب داخلی
     threading.Thread(target=run_server, daemon=True).start()
     time.sleep(1)
 
-    # ۲. ایجاد صفحه مانیتور مجازی
+    # ۲. ایجاد مانیتور مجازی
     os.environ["DISPLAY"] = ":99"
     subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{resolution}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
 
-    # ۳. باز کردن کروم با حذف کامل نوار ترجمه و تمام پاپ‌آپ‌ها
+    # ۳. باز کردن کروم با حذف کامل نوار ترجمه و کلیه پاپ‌آپ‌ها
     chrome_cmd = [
         'chromium-browser',
         '--kiosk',
         '--no-sandbox',
         '--disable-infobars',
         '--disable-dev-shm-usage',
+        '--lang=fa-IR',
+        '--accept-lang=fa-IR,fa,en-US,en',
         '--disable-translate',
-        '--disable-features=Translate',
-        '--simulate-outdated-no-au="1980-01-01"',
+        '--disable-features=Translate,OptimizationHints,MediaRouter',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--user-data-dir=/tmp/clean_chrome_profile',
         f'--window-size={resolution.replace("x", ",")}',
         'http://127.0.0.1:8080/'
     ]
     subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
 
-    # ۴. ضبط صفحه با حذف کامل نشانگر ماوس (-draw_mouse 0)
+    # ۴. ضبط صفحه نمایش (حذف کامل ماوس)
     ffmpeg_cmd = [
         'ffmpeg', '-y',
         '-f', 'x11grab',
@@ -299,7 +304,7 @@ def main():
 
     neon_stream_url = f"{S3_ENDPOINT}/{BUCKET_NAME}/live.m3u8"
     print("\n" + "="*60)
-    print("🚀 استریم زنده شفاف و بدون ماوس/نوار ترجمه آغاز شد!")
+    print("🚀 استریم زنده شفاف، بدون ماوس و بدون نوار ترجمه آغاز شد!")
     print(f"🔗 آدرس مستقیم: {neon_stream_url}")
     print("="*60 + "\n")
 
