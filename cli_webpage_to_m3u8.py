@@ -13,7 +13,7 @@ from flask import Flask, make_response
 
 app = Flask(__name__)
 
-# فایل HTML اختصاصی با مسدودسازی کامل هرگونه ترجمه و ماوس
+# فایل HTML شما
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="fa" dir="rtl" translate="no" class="notranslate">
 <head>
@@ -191,17 +191,17 @@ s3_client = boto3.client(
     config=Config(signature_version='s3v4')
 )
 
-# تابع پاک‌سازی تمام فایل‌های باکت در نئون
+# تابع تخلیه کامل باکت نئون
 def purge_bucket():
-    print("🧹 در حال پاک‌سازی فایل‌های استریم از سرور نئون...")
+    print("🧹 در حال پاک‌سازی باکت نئون...")
     try:
         response = s3_client.list_objects_v2(Bucket=BUCKET_NAME)
         if 'Contents' in response:
             objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
             s3_client.delete_objects(Bucket=BUCKET_NAME, Delete={'Objects': objects_to_delete})
-            print("✨ باکت نئون کاملاً تخلیه شد.")
+            print("✨ باکت نئون تخلیه شد.")
     except Exception as e:
-        print(f"⚠️ خطای جزیی در پاک‌سازی: {e}")
+        print(f"⚠️ پیام وضعیت باکت: {e}")
 
 def run_server():
     import logging
@@ -220,7 +220,7 @@ def s3_sync_worker(stop_event):
                         ts_file, BUCKET_NAME, ts_file,
                         ExtraArgs={
                             'ContentType': 'video/MP2T',
-                            'CacheControl': 'no-cache, no-store, must-revalidate'
+                            'CacheControl': 'no-cache, no-store, must-revalidate, max-age=0'
                         }
                     )
                     uploaded_files.add(ts_file)
@@ -233,7 +233,7 @@ def s3_sync_worker(stop_event):
                     "live.m3u8", BUCKET_NAME, "live.m3u8",
                     ExtraArgs={
                         'ContentType': 'application/vnd.apple.mpegurl',
-                        'CacheControl': 'no-cache, no-store, must-revalidate'
+                        'CacheControl': 'no-cache, no-store, must-revalidate, max-age=0'
                     }
                 )
             except Exception:
@@ -259,22 +259,22 @@ def main():
     resolution_str, width, height, bitrate = qualities.get(args.quality, qualities['720p'])
     fps = args.fps
 
-    # ۱. پاک‌سازی اولیه فایل‌های محلی و سرور نئون
+    # ۱. پاک‌سازی اولیه فایل‌های محلی و باکت ابری نئون
     for f in glob.glob("*.ts") + glob.glob("*.m3u8"):
         try: os.remove(f)
         except: pass
     purge_bucket()
 
-    # ۲. راه‌اندازی وب‌سرور داخلی
+    # ۲. اجرای وب‌سرور داخلی
     threading.Thread(target=run_server, daemon=True).start()
     time.sleep(1)
 
-    # ۳. ایجاد مانیتور مجازی به ابعاد دقیق
+    # ۳. ایجاد مانیتور مجازی دقیقاً به اندازه رزولوشن انتخابی
     os.environ["DISPLAY"] = ":99"
     subprocess.Popen(['Xvfb', ':99', '-screen', '0', f'{width}x{height}x24', '-ac'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
 
-    # ۴. تنظیم پروفایل کروم و حذف قطعی نوار ترجمه
+    # ۴. تنظیم پروفایل کروم و حذف دائمی نوار ترجمه
     profile_dir = f"/tmp/clean_chrome_profile_{width}x{height}"
     default_dir = os.path.join(profile_dir, "Default")
     os.makedirs(default_dir, exist_ok=True)
@@ -287,7 +287,7 @@ def main():
     with open(os.path.join(default_dir, "Preferences"), "w") as f:
         json.dump(prefs, f)
 
-    # ۵. باز کردن مرورگر بدون هیچ‌گونه نوار و آیکون
+    # ۵. اجرای مرورگر تمیز و تمام صفحه
     chrome_cmd = [
         'chromium-browser',
         '--kiosk',
@@ -307,7 +307,7 @@ def main():
     subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
 
-    # ۶. ضبط صفحه و ساخت فایل‌های HLS
+    # ۶. ضبط صفحه و ساخت فایل‌های HLS با حذف کامل نشانگر ماوس
     ffmpeg_cmd = [
         'ffmpeg', '-y',
         '-f', 'x11grab',
@@ -342,7 +342,7 @@ def main():
     print(f"🔗 آدرس مستقیم: {neon_stream_url}")
     print("="*60 + "\n")
 
-    # تابع خروج و پاک‌سازی هنگام متوقف شدن
+    # تابع خروج و پاک‌سازی هنگام متوقف شدن خودکار یا دستی
     def cleanup_and_exit(signum=None, frame=None):
         print("\n🛑 دستور توقف دریافت شد. در حال قطع استریم...")
         stop_event.set()
@@ -357,7 +357,7 @@ def main():
     signal.signal(signal.SIGINT, cleanup_and_exit)
     signal.signal(signal.SIGTERM, cleanup_and_exit)
 
-    # انتظار برای اتمام مدت زمان تعیین شده
+    # حفظ اجرای استریم برای زمان تعیین‌شده
     end_time = time.time() + (args.duration * 60)
     while time.time() < end_time:
         time.sleep(1)
